@@ -9,10 +9,12 @@ from typing import Optional, Tuple
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (
+    max_error,
     mean_absolute_error,
     mean_absolute_percentage_error,
     mean_squared_error,
     mean_squared_log_error,
+    median_absolute_error,
 )
 
 from nannyml._typing import ProblemType
@@ -597,3 +599,157 @@ class RMSLE(Metric):
             return np.nan
         else:
             return rmsle_sampling_error(self._sampling_error_components, data)
+
+
+@MetricFactory.register(metric="medae", use_case=ProblemType.REGRESSION)
+class MedAE(Metric):
+    """Median Absolute Error metric."""
+
+    y_pred: str
+
+    def __init__(
+        self,
+        y_true: str,
+        y_pred: str,
+        threshold: Threshold,
+        y_pred_proba: Optional[str] = None,
+        **kwargs,
+    ):
+        """Creates a new MedAE instance.
+
+        Args:
+            y_true: str
+                Name of the column containing true values.
+            y_pred: str
+                Name of the column containing model predictions.
+            threshold: Threshold
+                Threshold config for alerting.
+            y_pred_proba: Optional[str]
+                Ignored for regression.
+        """
+        super().__init__(
+            name="medae",
+            y_true=y_true,
+            y_pred=y_pred,
+            y_pred_proba=y_pred_proba,
+            threshold=threshold,
+            lower_threshold_limit=0,
+            components=[("MedAE", "medae")],
+        )
+        self._ref_std: float = 0.0
+        self._ref_n: int = 0
+
+    def __str__(self) -> str:
+        return "MedAE"
+
+    def _fit(self, reference_data: pd.DataFrame):
+        _list_missing([self.y_true, self.y_pred], list(reference_data.columns))
+        ref, empty = common_nan_removal(
+            reference_data[[self.y_true, self.y_pred]], [self.y_true, self.y_pred]
+        )
+        if empty:
+            self._ref_std = self._ref_n = 0
+            return
+        errors = abs(ref[self.y_true] - ref[self.y_pred])
+        self._ref_std = float(np.std(errors, ddof=0))
+        self._ref_n = len(errors)
+
+    def _calculate(self, data: pd.DataFrame) -> float:
+        """Redefine to handle NaNs and edge cases."""
+        _list_missing([self.y_true, self.y_pred], list(data.columns))
+        df, empty = common_nan_removal(
+            data[[self.y_true, self.y_pred]], [self.y_true, self.y_pred]
+        )
+        if empty:
+            warnings.warn(
+                f"No data or too many missing values, cannot calculate `{self.display_name}`. "
+                "Returning NaN."
+            )
+            return np.nan
+        return median_absolute_error(df[self.y_true], df[self.y_pred])
+
+    def _sampling_error(self, data: pd.DataFrame) -> float:
+        df, empty = common_nan_removal(data[[self.y_pred]], [self.y_pred])
+        if empty or self._ref_n == 0:
+            return np.nan
+        n2 = len(df)
+        # Approximate SE of the median: 1.253 * std / sqrt(n)
+        return 1.253 * self._ref_std / np.sqrt(min(self._ref_n, n2))
+
+
+@MetricFactory.register(metric="maxae", use_case=ProblemType.REGRESSION)
+class MaxAE(Metric):
+    """Maximum Absolute Error metric."""
+
+    y_pred: str
+
+    def __init__(
+        self,
+        y_true: str,
+        y_pred: str,
+        threshold: Threshold,
+        y_pred_proba: Optional[str] = None,
+        **kwargs,
+    ):
+        """Creates a new MaxAE instance.
+
+        Args:
+            y_true: str
+                Name of the column containing true values.
+            y_pred: str
+                Name of the column containing model predictions.
+            threshold: Threshold
+                Threshold config for alerting.
+            y_pred_proba: Optional[str]
+                Ignored for regression.
+        """
+        super().__init__(
+            name="maxae",
+            y_true=y_true,
+            y_pred=y_pred,
+            y_pred_proba=y_pred_proba,
+            threshold=threshold,
+            lower_threshold_limit=0,
+            components=[("MaxAE", "maxae")],
+        )
+        self._ref_max: float = 0.0
+        self._ref_n: int = 0
+
+    def __str__(self) -> str:
+        return "MaxAE"
+
+    def _fit(self, reference_data: pd.DataFrame):
+        _list_missing([self.y_true, self.y_pred], list(reference_data.columns))
+        ref, empty = common_nan_removal(
+            reference_data[[self.y_true, self.y_pred]], [self.y_true, self.y_pred]
+        )
+        if empty:
+            self._ref_max = self._ref_n = 0
+            return
+        errors = abs(ref[self.y_true] - ref[self.y_pred])
+        self._ref_max = float(np.max(errors))
+        self._ref_n = len(errors)
+
+    def _calculate(self, data: pd.DataFrame) -> float:
+        """Redefine to handle NaNs and edge cases."""
+        _list_missing([self.y_true, self.y_pred], list(data.columns))
+        df, empty = common_nan_removal(
+            data[[self.y_true, self.y_pred]], [self.y_true, self.y_pred]
+        )
+        if empty:
+            warnings.warn(
+                f"No data or too many missing values, cannot calculate `{self.display_name}`. "
+                "Returning NaN."
+            )
+            return np.nan
+        return max_error(np.abs(df[self.y_true]), np.abs(df[self.y_pred]))
+
+    def _sampling_error(self, data: pd.DataFrame) -> float:
+        df, empty = common_nan_removal(data[[self.y_pred]], [self.y_pred])
+        if empty or self._ref_n < 2:
+            return np.nan
+        n2 = len(df)
+        # Simplified extreme‐value theory approximation
+        scale = np.log(max(self._ref_n, 2)) / np.log(max(n2, 2))
+        se = self._ref_max * (1 - scale)
+        return float(max(0, se))
