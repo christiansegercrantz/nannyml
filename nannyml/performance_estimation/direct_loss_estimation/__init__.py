@@ -4,7 +4,7 @@
 
 """Module containing the Direct Error Estimation implementation."""
 
-SUPPORTED_METRIC_VALUES = ['mae', 'mape', 'mse', 'rmse', 'msle', 'rmsle']
+SUPPORTED_METRIC_VALUES = ["mae", "mape", "mse", "rmse", "msle", "rmsle", "medae"]
 
 from .dle import DLE  # noqa: E402
 from .result import Result  # noqa: E402
